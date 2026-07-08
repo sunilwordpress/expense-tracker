@@ -1,0 +1,27 @@
+{
+  "name": "ExpenseFlow",
+  "short_name": "ExpenseFlow",
+  "description": "Voice-first expense and income tracker.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#209689",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Add Expense",
+      "short_name": "Add",
+      "description": "Open ExpenseFlow to add a transaction.",
+      "url": "/?quick-add=1",
+      "icons": [{ "src": "/icon.svg", "sizes": "any" }]
+    }
+  ]
+}

@@ -1,0 +1,177 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TransactionType {
+  EXPENSE
+  INCOME
+}
+
+model User {
+  id             String          @id @default(cuid())
+  email          String          @unique
+  name           String?
+  image          String?
+  currency       String          @default("INR")
+  language       String          @default("en")
+  timezone       String          @default("Asia/Kolkata")
+  monthlyBudget  Decimal         @default(65000)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  transactions   Transaction[]
+  categories     Category[]
+  budgets        Budget[]
+  bills          Bill[]
+  merchants      Merchant[]
+  paymentMethods PaymentMethod[]
+  tags           Tag[]
+  receipts       Receipt[]
+  notifications  Notification[]
+  settings       Setting?
+  voiceLogs      VoiceLog[]
+}
+
+model Transaction {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount        Decimal
+  type          TransactionType
+  category      String
+  subCategory   String?
+  paymentMethod String
+  date          DateTime
+  time          String
+  merchant      String?
+  location      String?
+  notes         String?
+  receiptImage  String?
+  recurring     Boolean         @default(false)
+  confidence    Float?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  tags          Tag[]
+  receipt       Receipt?
+
+  @@index([userId, date])
+  @@index([category])
+  @@index([merchant])
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  icon      String?
+  color     String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, name])
+}
+
+model Budget {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  String?
+  amount    Decimal
+  month     Int
+  year      Int
+  createdAt DateTime @default(now())
+
+  @@unique([userId, category, month, year])
+}
+
+model Bill {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  amount    Decimal
+  category  String
+  dueDate   DateTime
+  recurring Boolean  @default(true)
+  paid      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Merchant {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  category  String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, name])
+}
+
+model PaymentMethod {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, name])
+}
+
+model Tag {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  transactions Transaction[]
+
+  @@unique([userId, name])
+}
+
+model Receipt {
+  id            String       @id @default(cuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactionId String       @unique
+  transaction   Transaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  imageUrl      String
+  ocrText       String?
+  createdAt     DateTime     @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Setting {
+  id                String  @id @default(cuid())
+  userId            String  @unique
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dailyReminder     Boolean @default(true)
+  weeklySummary     Boolean @default(true)
+  monthlyReport     Boolean @default(true)
+  budgetAlerts      Boolean @default(true)
+  billReminder      Boolean @default(true)
+  privacyFirstMode  Boolean @default(true)
+}
+
+model VoiceLog {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transcript String
+  parsed     Json?
+  confidence Float?
+  createdAt  DateTime @default(now())
+}
