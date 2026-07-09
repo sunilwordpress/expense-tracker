@@ -19,6 +19,10 @@ export function loadBudget(): Budget {
   return read(budgetKey, defaultBudget);
 }
 
+export function saveBudget(budget: Budget) {
+  localStorage.setItem(budgetKey, JSON.stringify(budget));
+}
+
 export function loadBills(): Bill[] {
   return read(billKey, sampleBills);
 }

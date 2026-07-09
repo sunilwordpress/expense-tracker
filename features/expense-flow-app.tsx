@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { backupJson, loadBills, loadBudget, loadTransactions, saveTransactions } from "@/lib/local-store";
+import { backupJson, loadBills, loadBudget, loadTransactions, saveBudget, saveTransactions } from "@/lib/local-store";
 import { parseVoiceTransaction } from "@/lib/voice-parser";
 import { cn, formatMoney, uid } from "@/lib/utils";
 import { categories, paymentMethods, type Transaction } from "@/types/expense";
@@ -25,12 +25,13 @@ export function ExpenseFlowApp() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [draft, setDraft] = useState<Partial<Transaction> | null>(null);
   const [dark, setDark] = useState(false);
+  const [monthlyBudget, setMonthlyBudget] = useState(65000);
   const fileRef = useRef<HTMLInputElement>(null);
-  const budget = loadBudget();
   const bills = loadBills();
 
   useEffect(() => {
     setTransactions(loadTransactions());
+    setMonthlyBudget(loadBudget().monthly);
   }, []);
 
   useEffect(() => {
@@ -56,14 +57,16 @@ export function ExpenseFlowApp() {
     });
   }, [transactions, query, range, category]);
 
-  const totals = useMemo(() => summarize(transactions, budget.monthly), [transactions, budget.monthly]);
+  const totals = useMemo(() => summarize(transactions, monthlyBudget), [transactions, monthlyBudget]);
+  const budgetAlerts = useMemo(() => getBudgetAlerts(totals), [totals]);
   const categoryData = useMemo(() => summarizeByCategory(filtered), [filtered]);
   const trendData = useMemo(() => trend(transactions), [transactions]);
   const nextBills = bills.filter((bill) => isAfter(parseISO(bill.dueDate), addDays(new Date(), -1))).slice(0, 3);
   const foodDelta = monthlyDelta(transactions, "Food");
 
-  function addTransaction(values: Partial<Transaction>) {
+  function saveTransaction(values: Partial<Transaction>) {
     const date = values.date ?? new Date().toISOString().slice(0, 10);
+    const isEditing = Boolean(values.id);
     const transaction: Transaction = {
       id: values.id ?? uid("tx"),
       amount: Number(values.amount ?? 0),
@@ -89,10 +92,14 @@ export function ExpenseFlowApp() {
       return;
     }
 
-    persist([transaction, ...transactions]);
+    const nextTransactions = isEditing
+      ? transactions.map((item) => (item.id === transaction.id ? transaction : item))
+      : [transaction, ...transactions];
+
+    persist(nextTransactions);
     setIsFormOpen(false);
     setDraft(null);
-    toast.success(`${transaction.type === "INCOME" ? "Income" : "Expense"} added`);
+    toast.success(`${transaction.type === "INCOME" ? "Income" : "Expense"} ${isEditing ? "updated" : "added"}`);
   }
 
   function handleVoiceResult(text: string) {
@@ -121,7 +128,12 @@ export function ExpenseFlowApp() {
       return;
     }
 
-    addTransaction(nextDraft);
+    saveTransaction(nextDraft);
+  }
+
+  function editTransaction(transaction: Transaction) {
+    setDraft(transaction);
+    setIsFormOpen(true);
   }
 
   function exportCsv() {
@@ -142,6 +154,34 @@ export function ExpenseFlowApp() {
     }
     persist(parsed.transactions);
     toast.success("Backup restored");
+  }
+
+  function resetAllData() {
+    const confirmed = window.confirm("Reset all local transactions? Download a JSON backup first if you want to keep a copy.");
+    if (!confirmed) return;
+
+    persist([]);
+    toast.success("All local transactions reset");
+  }
+
+  function startCurrentMonthFresh() {
+    const confirmed = window.confirm("Remove transactions before this month? This keeps only current-month entries.");
+    if (!confirmed) return;
+
+    const currentMonthTransactions = transactions.filter((transaction) => isSameMonth(parseISO(transaction.date), new Date()));
+    persist(currentMonthTransactions);
+    toast.success("Older transactions removed. This month is ready.");
+  }
+
+  function updateMonthlyBudget() {
+    if (monthlyBudget < 0) {
+      toast.error("Budget cannot be negative.");
+      return;
+    }
+
+    const existingBudget = loadBudget();
+    saveBudget({ ...existingBudget, monthly: monthlyBudget });
+    toast.success("Monthly budget updated");
   }
 
   return (
@@ -188,6 +228,17 @@ export function ExpenseFlowApp() {
             <Metric title="Daily Limit Left" value={formatMoney(totals.dailyLimit)} />
           </section>
 
+          {budgetAlerts.length ? (
+            <Card className="border-destructive/40 bg-destructive/10">
+              <h2 className="mb-2 font-semibold text-destructive">Budget Alert</h2>
+              <div className="space-y-1 text-sm">
+                {budgetAlerts.map((alert) => (
+                  <p key={alert}>{alert}</p>
+                ))}
+              </div>
+            </Card>
+          ) : null}
+
           <Card>
             <div className="grid gap-3 md:grid-cols-[1fr_170px_170px_auto]">
               <div className="relative">
@@ -219,7 +270,7 @@ export function ExpenseFlowApp() {
               </div>
               <div className="space-y-2">
                 {filtered.slice(0, 9).map((transaction) => (
-                  <TransactionRow key={transaction.id} transaction={transaction} />
+                  <TransactionRow key={transaction.id} transaction={transaction} onEdit={editTransaction} />
                 ))}
               </div>
             </Card>
@@ -283,12 +334,34 @@ export function ExpenseFlowApp() {
           </Card>
 
           <Card id="settings">
+            <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+              <Field label="Monthly Budget">
+                <Input
+                  type="number"
+                  min="0"
+                  value={monthlyBudget}
+                  onChange={(event) => setMonthlyBudget(Number(event.target.value))}
+                />
+              </Field>
+              <Button className="self-end" onClick={updateMonthlyBudget}>
+                Update Budget
+              </Button>
+            </div>
+            <p className="mb-4 text-sm text-muted-foreground">
+              Budget Remaining and Daily Limit Left update from this value and your current-month expenses.
+            </p>
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" onClick={exportJson}>
                 <Download size={16} /> Backup JSON
               </Button>
               <Button variant="secondary" onClick={() => fileRef.current?.click()}>
                 <Upload size={16} /> Restore JSON
+              </Button>
+              <Button variant="secondary" onClick={startCurrentMonthFresh}>
+                Start Month Fresh
+              </Button>
+              <Button variant="danger" onClick={resetAllData}>
+                Reset All Data
               </Button>
               <input ref={fileRef} hidden type="file" accept="application/json" onChange={(event) => importJson(event.target.files?.[0])} />
             </div>
@@ -297,7 +370,7 @@ export function ExpenseFlowApp() {
       </div>
 
       <VoiceButton onResult={handleVoiceResult} />
-      {isFormOpen ? <TransactionForm initial={draft} onClose={() => setIsFormOpen(false)} onSubmit={addTransaction} /> : null}
+      {isFormOpen ? <TransactionForm initial={draft} onClose={() => setIsFormOpen(false)} onSubmit={saveTransaction} /> : null}
       <MobileNav onAdd={() => setIsFormOpen(true)} />
     </main>
   );
@@ -312,7 +385,7 @@ function Metric({ title, value, tone }: { title: string; value: string; tone?: "
   );
 }
 
-function TransactionRow({ transaction }: { transaction: Transaction }) {
+function TransactionRow({ transaction, onEdit }: { transaction: Transaction; onEdit: (transaction: Transaction) => void }) {
   const isIncome = transaction.type === "INCOME";
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border p-3">
@@ -322,9 +395,14 @@ function TransactionRow({ transaction }: { transaction: Transaction }) {
           {transaction.category} · {format(parseISO(transaction.date), "d MMM")} · {transaction.paymentMethod}
         </p>
       </div>
-      <p className={cn("font-bold", isIncome ? "text-primary" : "text-destructive")}>
-        {isIncome ? "+" : "-"}{formatMoney(transaction.amount)}
-      </p>
+      <div className="flex shrink-0 items-center gap-2">
+        <p className={cn("font-bold", isIncome ? "text-primary" : "text-destructive")}>
+          {isIncome ? "+" : "-"}{formatMoney(transaction.amount)}
+        </p>
+        <Button className="min-h-8 px-3 py-1" variant="ghost" onClick={() => onEdit(transaction)}>
+          Edit
+        </Button>
+      </div>
     </div>
   );
 }
@@ -394,7 +472,7 @@ function TransactionForm({
       >
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold">Add Transaction</h2>
+            <h2 className="text-lg font-bold">{values.id ? "Edit Transaction" : "Add Transaction"}</h2>
             {values.confidence ? <p className="text-sm text-muted-foreground">Voice confidence {Math.round(values.confidence * 100)}%</p> : null}
           </div>
           <Button type="button" variant="ghost" onClick={onClose}>Close</Button>
@@ -454,7 +532,7 @@ function TransactionForm({
 
         <div className="mt-4 flex justify-end gap-2">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit">Save Transaction</Button>
+          <Button type="submit">{values.id ? "Update Transaction" : "Save Transaction"}</Button>
         </div>
       </form>
     </div>
@@ -487,6 +565,7 @@ function summarize(transactions: Transaction[], monthlyBudget: number) {
   const monthExpense = sum(transactions.filter((item) => item.type === "EXPENSE" && isSameMonth(parseISO(item.date), now)));
   const todayExpense = sum(transactions.filter((item) => item.type === "EXPENSE" && isSameDay(parseISO(item.date), now)));
   const weekExpense = sum(transactions.filter((item) => item.type === "EXPENSE" && isSameWeek(parseISO(item.date), now)));
+  const daysInMonth = Number(format(new Date(now.getFullYear(), now.getMonth() + 1, 0), "d"));
   const daysLeft = Math.max(1, Number(format(new Date(now.getFullYear(), now.getMonth() + 1, 0), "d")) - Number(format(now, "d")) + 1);
   const budgetRemaining = monthlyBudget - monthExpense;
 
@@ -498,8 +577,23 @@ function summarize(transactions: Transaction[], monthlyBudget: number) {
     balance: income - monthExpense,
     savings: income - monthExpense,
     budgetRemaining,
-    dailyLimit: Math.max(0, budgetRemaining / daysLeft)
+    dailyLimit: Math.max(0, budgetRemaining / daysLeft),
+    dailyTarget: monthlyBudget / daysInMonth
   };
+}
+
+function getBudgetAlerts(totals: ReturnType<typeof summarize>) {
+  const alerts: string[] = [];
+
+  if (totals.budgetRemaining < 0) {
+    alerts.push(`Monthly budget exceeded by ${formatMoney(Math.abs(totals.budgetRemaining))}.`);
+  }
+
+  if (totals.todayExpense > totals.dailyTarget) {
+    alerts.push(`Today's spending is ${formatMoney(totals.todayExpense - totals.dailyTarget)} over your daily target of ${formatMoney(totals.dailyTarget)}.`);
+  }
+
+  return alerts;
 }
 
 function summarizeByCategory(transactions: Transaction[]) {
