@@ -27,6 +27,10 @@ export function loadBills(): Bill[] {
   return read(billKey, sampleBills);
 }
 
+export function saveBills(bills: Bill[]) {
+  localStorage.setItem(billKey, JSON.stringify(bills));
+}
+
 export function backupJson(transactions: Transaction[]) {
   return JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), transactions }, null, 2);
 }

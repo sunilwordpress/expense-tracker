@@ -10,10 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { backupJson, loadBills, loadBudget, loadTransactions, saveBudget, saveTransactions } from "@/lib/local-store";
+import { backupJson, loadBills, loadBudget, loadTransactions, saveBills, saveBudget, saveTransactions } from "@/lib/local-store";
 import { parseVoiceTransaction } from "@/lib/voice-parser";
 import { cn, formatMoney, uid } from "@/lib/utils";
-import { categories, paymentMethods, type Transaction } from "@/types/expense";
+import { categories, paymentMethods, type Bill, type Transaction } from "@/types/expense";
 
 const chartColors = ["#209689", "#2563eb", "#f59e0b", "#ef4444", "#8b5cf6", "#14b8a6", "#64748b"];
 
@@ -23,15 +23,18 @@ export function ExpenseFlowApp() {
   const [range, setRange] = useState("This Month");
   const [category, setCategory] = useState("All");
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isBillFormOpen, setIsBillFormOpen] = useState(false);
   const [draft, setDraft] = useState<Partial<Transaction> | null>(null);
+  const [billDraft, setBillDraft] = useState<Partial<Bill> | null>(null);
   const [dark, setDark] = useState(false);
   const [monthlyBudget, setMonthlyBudget] = useState(65000);
   const fileRef = useRef<HTMLInputElement>(null);
-  const bills = loadBills();
+  const [bills, setBills] = useState<Bill[]>([]);
 
   useEffect(() => {
     setTransactions(loadTransactions());
     setMonthlyBudget(loadBudget().monthly);
+    setBills(loadBills());
   }, []);
 
   useEffect(() => {
@@ -42,6 +45,12 @@ export function ExpenseFlowApp() {
     const sorted = [...next].sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
     setTransactions(sorted);
     saveTransactions(sorted);
+  }
+
+  function persistBills(next: Bill[]) {
+    const sorted = [...next].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    setBills(sorted);
+    saveBills(sorted);
   }
 
   const filtered = useMemo(() => {
@@ -61,7 +70,10 @@ export function ExpenseFlowApp() {
   const budgetAlerts = useMemo(() => getBudgetAlerts(totals), [totals]);
   const categoryData = useMemo(() => summarizeByCategory(filtered), [filtered]);
   const trendData = useMemo(() => trend(transactions), [transactions]);
-  const nextBills = bills.filter((bill) => isAfter(parseISO(bill.dueDate), addDays(new Date(), -1))).slice(0, 3);
+  const nextBills = bills
+    .filter((bill) => isAfter(parseISO(bill.dueDate), addDays(new Date(), -1)))
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+    .slice(0, 5);
   const foodDelta = monthlyDelta(transactions, "Food");
 
   function saveTransaction(values: Partial<Transaction>) {
@@ -134,6 +146,40 @@ export function ExpenseFlowApp() {
   function editTransaction(transaction: Transaction) {
     setDraft(transaction);
     setIsFormOpen(true);
+  }
+
+  function saveBill(values: Partial<Bill>) {
+    const bill: Bill = {
+      id: values.id ?? uid("bill"),
+      name: values.name?.trim() || "Untitled Bill",
+      amount: Number(values.amount ?? 0),
+      category: values.category ?? "Miscellaneous",
+      dueDate: values.dueDate ?? new Date().toISOString().slice(0, 10),
+      recurring: values.recurring ?? true
+    };
+
+    if (!bill.amount) {
+      toast.error("Enter the bill amount first.");
+      return;
+    }
+
+    persistBills(values.id ? bills.map((item) => (item.id === bill.id ? bill : item)) : [...bills, bill]);
+    setBillDraft(null);
+    setIsBillFormOpen(false);
+    toast.success(`Bill ${values.id ? "updated" : "added"}`);
+  }
+
+  function editBill(bill: Bill) {
+    setBillDraft({ ...bill, dueDate: bill.dueDate.slice(0, 10) });
+    setIsBillFormOpen(true);
+  }
+
+  function deleteBill(billId: string) {
+    const confirmed = window.confirm("Delete this upcoming bill?");
+    if (!confirmed) return;
+
+    persistBills(bills.filter((bill) => bill.id !== billId));
+    toast.success("Bill deleted");
   }
 
   function exportCsv() {
@@ -276,17 +322,40 @@ export function ExpenseFlowApp() {
             </Card>
 
             <Card id="bills">
-              <h2 className="mb-3 font-semibold">Upcoming Bills</h2>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 className="font-semibold">Upcoming Bills</h2>
+                <Button
+                  className="min-h-8 px-3 py-1"
+                  variant="secondary"
+                  onClick={() => {
+                    setBillDraft(null);
+                    setIsBillFormOpen(true);
+                  }}
+                >
+                  Add Bill
+                </Button>
+              </div>
               <div className="space-y-3">
                 {nextBills.map((bill) => (
                   <div className="flex items-center justify-between rounded-md bg-muted p-3" key={bill.id}>
                     <div>
                       <p className="font-medium">{bill.name}</p>
-                      <p className="text-sm text-muted-foreground">Due {format(parseISO(bill.dueDate), "d MMM")}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {bill.category} · Due {format(parseISO(bill.dueDate), "d MMM")} · {bill.recurring ? "Recurring" : "One-time"}
+                      </p>
                     </div>
-                    <p className="font-semibold">{formatMoney(bill.amount)}</p>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <p className="font-semibold">{formatMoney(bill.amount)}</p>
+                      <Button className="min-h-8 px-3 py-1" variant="ghost" onClick={() => editBill(bill)}>
+                        Edit
+                      </Button>
+                      <Button className="min-h-8 px-3 py-1" variant="ghost" onClick={() => deleteBill(bill.id)}>
+                        Delete
+                      </Button>
+                    </div>
                   </div>
                 ))}
+                {!nextBills.length ? <p className="text-sm text-muted-foreground">No upcoming bills. Add one to track reminders.</p> : null}
               </div>
             </Card>
           </section>
@@ -371,6 +440,7 @@ export function ExpenseFlowApp() {
 
       <VoiceButton onResult={handleVoiceResult} />
       {isFormOpen ? <TransactionForm initial={draft} onClose={() => setIsFormOpen(false)} onSubmit={saveTransaction} /> : null}
+      {isBillFormOpen ? <BillForm initial={billDraft} onClose={() => setIsBillFormOpen(false)} onSubmit={saveBill} /> : null}
       <MobileNav onAdd={() => setIsFormOpen(true)} />
     </main>
   );
@@ -533,6 +603,72 @@ function TransactionForm({
         <div className="mt-4 flex justify-end gap-2">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit">{values.id ? "Update Transaction" : "Save Transaction"}</Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function BillForm({
+  initial,
+  onClose,
+  onSubmit
+}: {
+  initial: Partial<Bill> | null;
+  onClose: () => void;
+  onSubmit: (values: Partial<Bill>) => void;
+}) {
+  const [values, setValues] = useState<Partial<Bill>>({
+    name: "",
+    amount: 0,
+    category: "Electricity",
+    dueDate: new Date().toISOString().slice(0, 10),
+    recurring: true,
+    ...initial
+  });
+
+  function update<K extends keyof Bill>(key: K, value: Bill[K]) {
+    setValues((current) => ({ ...current, [key]: value }));
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-end bg-black/40 p-0 sm:place-items-center sm:p-4">
+      <form
+        className="w-full max-w-lg rounded-t-lg bg-card p-4 shadow-soft sm:rounded-lg"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit(values);
+        }}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-bold">{values.id ? "Edit Bill" : "Add Bill"}</h2>
+          <Button type="button" variant="ghost" onClick={onClose}>Close</Button>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Bill Name">
+            <Input value={values.name ?? ""} onChange={(event) => update("name", event.target.value)} required />
+          </Field>
+          <Field label="Amount">
+            <Input type="number" min="0" step="0.01" value={values.amount ?? ""} onChange={(event) => update("amount", Number(event.target.value))} required />
+          </Field>
+          <Field label="Category">
+            <Select value={values.category} onChange={(event) => update("category", event.target.value)}>
+              {categories.map((item) => <option key={item}>{item}</option>)}
+            </Select>
+          </Field>
+          <Field label="Due Date">
+            <Input type="date" value={values.dueDate?.slice(0, 10) ?? ""} onChange={(event) => update("dueDate", event.target.value)} required />
+          </Field>
+          <label className="flex items-center gap-2 text-sm sm:col-span-2">
+            <input type="checkbox" checked={values.recurring ?? true} onChange={(event) => update("recurring", event.target.checked)} />
+            Recurring bill
+          </label>
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit">{values.id ? "Update Bill" : "Save Bill"}</Button>
         </div>
       </form>
     </div>
